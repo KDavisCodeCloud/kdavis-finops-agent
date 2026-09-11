@@ -59,6 +59,17 @@ RLS follows the `current_setting('app.tenant_id')` idiom (this backend has
 no Supabase Auth wiring — connects with an effectively service-role
 connection string), not `auth.uid()`.
 
+## This service needs its own AWS identity, separate from any customer's
+
+Discovered live 2026-09-11: calling `sts.assume_role()` into a customer's
+role requires the *caller* to already have valid AWS credentials — boto3's
+default credential chain finds nothing inside a bare container otherwise
+(`NoCredentialsError`). `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are a
+dedicated IAM user (`finops-agent-service`) scoped to **only**
+`sts:AssumeRole`, nothing else — never a personal/admin credential. This is
+permanent infrastructure the service depends on to function at all, not a
+throwaway test credential.
+
 ## Auth
 
 `X-Tenant-Token` header, SHA-256 hashed before lookup, never stored in
