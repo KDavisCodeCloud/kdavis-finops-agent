@@ -77,8 +77,12 @@ class TestAssumeRoleSession:
             }
             assume_role_session("arn:aws:iam::222222222222:role/finops", "ext-abc")
 
+            # A session built from raw assumed-role creds has no region behind
+            # it (confirmed live: EC2/RDS/S3/Security Hub all fail with
+            # "You must specify a region." otherwise) -- must be set explicitly.
             mock_session.assert_called_once_with(
                 aws_access_key_id="AKIATEMP",
                 aws_secret_access_key="secret",
                 aws_session_token="token",
+                region_name="us-east-1",
             )

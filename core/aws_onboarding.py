@@ -8,10 +8,17 @@ AWS-managed ReadOnlyAccess policy. If a new check is added to that
 provider, this policy needs a matching action added here.
 """
 
+import os
 import secrets
 
 import boto3
 from botocore.exceptions import ClientError
+
+# A boto3.Session built from raw assumed-role credentials (no ~/.aws/config
+# behind it) has no region at all -- confirmed live 2026-09-11: EC2/RDS/S3/
+# Security Hub all failed with "You must specify a region." Cost Explorer,
+# IAM, and STS are global/us-east-1-only APIs so they never surfaced this.
+_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 _PERMISSIONS_POLICY_ACTIONS = [
     "ce:GetCostAndUsage",
@@ -95,4 +102,5 @@ def assume_role_session(role_arn: str, external_id: str) -> boto3.Session:
         aws_access_key_id=creds["AccessKeyId"],
         aws_secret_access_key=creds["SecretAccessKey"],
         aws_session_token=creds["SessionToken"],
+        region_name=_DEFAULT_REGION,
     )
