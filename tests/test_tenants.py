@@ -97,10 +97,11 @@ class TestConnectAwsRole:
 class TestGetDashboard:
     async def test_returns_latest_scan_and_open_items(self):
         tenant_id = uuid4()
+        scan_id = uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
             return_value={
-                "id": uuid4(),
+                "id": scan_id,
                 "provider": "aws",
                 "status": "ready",
                 "total_findings": 3,
@@ -131,6 +132,24 @@ class TestGetDashboard:
 
         assert result.latest_scan.total_findings == 3
         assert len(result.open_items) == 1
+        # Regression test: open_items must be scoped to the latest scan_id,
+        # not every pending item the tenant has ever accumulated across
+        # scans (confirmed live 2026-09-11 -- a second scan was piling up
+        # duplicates of the first scan's items otherwise).
+        sql, bound_scan_id = conn.fetch.await_args.args
+        assert bound_scan_id == scan_id
+
+    async def test_no_scans_yet_skips_items_query_entirely(self):
+        tenant_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        request = _make_request(conn)
+        fake_tenant = {"id": tenant_id, "status": "pending_setup"}
+
+        result = await tenants.get_dashboard(str(tenant_id), request, tenant=fake_tenant)
+
+        assert result.open_items == []
+        conn.fetch.assert_not_called()
 
     async def test_no_scans_yet_returns_none_latest_scan(self):
         tenant_id = uuid4()

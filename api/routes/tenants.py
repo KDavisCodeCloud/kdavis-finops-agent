@@ -168,11 +168,19 @@ async def get_dashboard(
             "ORDER BY started_at DESC LIMIT 1",
             tenant_id,
         )
-        item_rows = await conn.fetch(
-            "SELECT id, severity, category, title, description, remediation, "
-            "estimated_monthly_waste_usd, priority_rank, status FROM finops_hitl_queue "
-            "WHERE tenant_id = $1 AND status = 'pending_approval' ORDER BY priority_rank",
-            tenant_id,
+        # Scoped to the latest scan, not every pending item the tenant has
+        # ever accumulated -- confirmed live 2026-09-11: without this, a
+        # second scan just piles up duplicate items next to the first
+        # scan's, since nothing else ever marks old items superseded.
+        item_rows = (
+            await conn.fetch(
+                "SELECT id, severity, category, title, description, remediation, "
+                "estimated_monthly_waste_usd, priority_rank, status FROM finops_hitl_queue "
+                "WHERE scan_id = $1 AND status = 'pending_approval' ORDER BY priority_rank",
+                scan_row["id"],
+            )
+            if scan_row
+            else []
         )
 
     latest_scan = None
