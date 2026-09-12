@@ -20,3 +20,4 @@ azure-mgmt-storage>=21.0
 azure-mgmt-security>=6.0
 azure-mgmt-resource>=23.0
 azure-mgmt-monitor>=6.0
+azure-mgmt-network>=28.0
