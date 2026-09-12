@@ -11,12 +11,12 @@ pytest-cov>=5.0
 
 kdavis-cloud-audit @ git+https://github.com/KDavisCodeCloud/kdavis-cloud-audit.git@master
 
-# Phase 2 (Azure onboarding) -- uncomment when that phase starts:
-# azure-identity>=1.17
-# azure-mgmt-costmanagement>=4.0
-# azure-mgmt-advisor>=9.0
-# azure-mgmt-compute>=31.0
-# azure-mgmt-storage>=21.0
-# azure-mgmt-security>=6.0
-# azure-mgmt-resource>=23.0
-# azure-mgmt-monitor>=6.0
+# Phase 2 (Azure onboarding)
+azure-identity>=1.17
+azure-mgmt-costmanagement>=4.0
+azure-mgmt-advisor>=9.0
+azure-mgmt-compute>=31.0
+azure-mgmt-storage>=21.0
+azure-mgmt-security>=6.0
+azure-mgmt-resource>=23.0
+azure-mgmt-monitor>=6.0

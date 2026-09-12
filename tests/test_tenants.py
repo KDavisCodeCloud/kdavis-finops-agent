@@ -32,6 +32,7 @@ class TestCreateTenant:
         assert result.id == str(tenant_id)
         assert result.tenant_token.startswith("fo_t_")
         assert result.aws_trust_policy["Statement"][0]["Principal"]["AWS"] == "arn:aws:iam::111111111111:root"
+        assert "az ad sp create-for-rbac" in result.azure_setup_instructions
 
         sql, company_name, token_hash, external_id = conn.fetchrow.await_args.args
         assert company_name == "Acme"
@@ -88,6 +89,74 @@ class TestConnectAwsRole:
             await tenants.connect_aws_role(
                 str(uuid4()),
                 tenants.ConnectAwsRoleRequest(role_arn="arn:x"),
+                request,
+                tenant=fake_tenant,
+            )
+        assert exc.value.status_code == 404
+
+
+class TestConnectAzureCredentials:
+    async def test_verifies_and_activates(self):
+        tenant_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"id": tenant_id, "company_name": "Acme", "status": "active"})
+        request = _make_request(conn)
+        fake_tenant = {"id": tenant_id}
+
+        with patch("api.routes.tenants.verify_service_principal") as mock_verify, \
+             patch("api.routes.tenants.encrypt", return_value="encrypted-secret") as mock_encrypt:
+            result = await tenants.connect_azure_credentials(
+                str(tenant_id),
+                tenants.ConnectAzureCredentialsRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="raw-secret", subscription_id="sub",
+                ),
+                request,
+                tenant=fake_tenant,
+            )
+
+        mock_verify.assert_called_once_with("tid", "cid", "raw-secret", "sub")
+        mock_encrypt.assert_called_once_with("raw-secret")
+        assert result.status == "active"
+
+        sql, azure_tenant_id, client_id, encrypted_secret, subscription_id, bound_id = conn.fetchrow.await_args.args
+        assert azure_tenant_id == "tid"
+        assert client_id == "cid"
+        assert encrypted_secret == "encrypted-secret"
+        assert subscription_id == "sub"
+        assert bound_id == str(tenant_id)
+        # Provider switch: connecting Azure must clean up any prior AWS
+        # connection, not leave it dangling alongside the new one.
+        assert "aws_role_arn = NULL" in sql
+        assert "connected_provider = 'azure'" in sql
+
+    async def test_verification_failure_returns_400_and_does_not_write(self):
+        tenant_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+        fake_tenant = {"id": tenant_id}
+
+        with patch("api.routes.tenants.verify_service_principal", side_effect=tenants.AzureConnectError("bad creds")):
+            with pytest.raises(HTTPException) as exc:
+                await tenants.connect_azure_credentials(
+                    str(tenant_id),
+                    tenants.ConnectAzureCredentialsRequest(
+                        azure_tenant_id="tid", client_id="cid", client_secret="s", subscription_id="sub",
+                    ),
+                    request,
+                    tenant=fake_tenant,
+                )
+        assert exc.value.status_code == 400
+        conn.fetchrow.assert_not_called()
+
+    async def test_tenant_id_mismatch_404(self):
+        request = _make_request(AsyncMock())
+        fake_tenant = {"id": uuid4()}
+        with pytest.raises(HTTPException) as exc:
+            await tenants.connect_azure_credentials(
+                str(uuid4()),
+                tenants.ConnectAzureCredentialsRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="s", subscription_id="sub",
+                ),
                 request,
                 tenant=fake_tenant,
             )

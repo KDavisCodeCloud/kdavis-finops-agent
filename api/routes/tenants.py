@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from api.middleware.auth import _hash_token, get_tenant
 from core.aws_onboarding import AssumeRoleError, build_permissions_policy, build_trust_policy, generate_external_id, verify_role
+from core.azure_onboarding import AzureConnectError, generate_setup_instructions, verify_service_principal
+from security.encryption import encrypt
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -39,10 +41,18 @@ class CreateTenantResponse(BaseModel):
     aws_trust_policy: dict
     aws_permissions_policy: dict
     instructions: str
+    azure_setup_instructions: str
 
 
 class ConnectAwsRoleRequest(BaseModel):
     role_arn: str = Field(..., min_length=1)
+
+
+class ConnectAzureCredentialsRequest(BaseModel):
+    azure_tenant_id: str = Field(..., min_length=1)
+    client_id: str = Field(..., min_length=1)
+    client_secret: str = Field(..., min_length=1)
+    subscription_id: str = Field(..., min_length=1)
 
 
 class TenantStatusResponse(BaseModel):
@@ -118,6 +128,7 @@ async def create_tenant(body: CreateTenantRequest, request: Request) -> CreateTe
             "policy (read-only, scoped to exactly what gets scanned). Then "
             f"call PATCH /tenants/{tenant_id}/aws-role with the role's ARN."
         ),
+        azure_setup_instructions=generate_setup_instructions(),
     )
 
 
@@ -149,6 +160,53 @@ async def connect_aws_role(
         )
 
     log.info("[Tenants] AWS role verified tenant=%s", tenant_id)
+    return TenantStatusResponse(id=str(row["id"]), company_name=row["company_name"], status=row["status"])
+
+
+@router.patch("/{tenant_id}/azure-credentials", response_model=TenantStatusResponse)
+async def connect_azure_credentials(
+    tenant_id: str,
+    body: ConnectAzureCredentialsRequest,
+    request: Request,
+    tenant: dict = Depends(get_tenant),
+) -> TenantStatusResponse:
+    if str(tenant["id"]) != tenant_id:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    try:
+        verify_service_principal(body.azure_tenant_id, body.client_id, body.client_secret, body.subscription_id)
+    except AzureConnectError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not verify Service Principal: {exc}") from exc
+
+    # Provider switch: a tenant re-onboarding with Azure after AWS (or
+    # vice versa) gets a clean cutover -- the old provider's credential
+    # columns are nulled so nothing orphaned is left behind, and
+    # connected_provider always reflects the one currently active
+    # connection (see migration 002's header comment).
+    async with request.app.state.db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE finops_tenants
+            SET azure_tenant_id = $1,
+                azure_client_id = $2,
+                azure_client_secret_encrypted = $3,
+                azure_subscription_id = $4,
+                azure_verified_at = NOW(),
+                connected_provider = 'azure',
+                status = 'active',
+                aws_role_arn = NULL,
+                aws_verified_at = NULL
+            WHERE id = $5
+            RETURNING id, company_name, status
+            """,
+            body.azure_tenant_id,
+            body.client_id,
+            encrypt(body.client_secret),
+            body.subscription_id,
+            tenant_id,
+        )
+
+    log.info("[Tenants] Azure Service Principal verified tenant=%s", tenant_id)
     return TenantStatusResponse(id=str(row["id"]), company_name=row["company_name"], status=row["status"])
 
 

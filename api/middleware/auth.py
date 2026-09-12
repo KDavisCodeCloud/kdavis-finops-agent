@@ -26,7 +26,9 @@ async def get_tenant(request: Request) -> dict:
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, company_name, aws_role_arn, aws_external_id, status "
+            "SELECT id, company_name, aws_role_arn, aws_external_id, status, "
+            "connected_provider, azure_tenant_id, azure_client_id, "
+            "azure_client_secret_encrypted, azure_subscription_id "
             "FROM finops_tenants WHERE tenant_token = $1",
             token_hash,
         )
